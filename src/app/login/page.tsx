@@ -4,11 +4,12 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { redirect } from "next/navigation";
 
-export default function LoginPage({
+export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: { next?: string; error?: string };
+  searchParams: Promise<{ next?: string; error?: string }>;
 }) {
+  const sp = await searchParams;
   async function action(formData: FormData) {
     "use server";
     const email = formData.get("email") as string;
@@ -17,11 +18,11 @@ export default function LoginPage({
       await signIn("credentials", {
         email,
         password,
-        redirectTo: searchParams.next ?? "/dashboard",
+        redirectTo: sp.next ?? "/dashboard",
       });
     } catch (err) {
       if ((err as Error).message?.includes("NEXT_REDIRECT")) throw err;
-      redirect(`/login?error=1&next=${searchParams.next ?? ""}`);
+      redirect(`/login?error=1&next=${sp.next ?? ""}`);
     }
   }
 
@@ -48,7 +49,7 @@ export default function LoginPage({
               </label>
               <Input id="password" name="password" type="password" required />
             </div>
-            {searchParams.error && (
+            {sp.error && (
               <p className="text-sm text-destructive">Identifiants invalides.</p>
             )}
             <Button type="submit" className="w-full">

@@ -9,12 +9,16 @@ const NAV = [
   { href: "/chantiers", label: "Chantiers" },
   { href: "/devis", label: "Devis" },
   { href: "/factures", label: "Factures" },
+  { href: "/factures/ocr", label: "OCR factures (IA)" },
   { href: "/ecritures", label: "Écritures" },
   { href: "/tresorerie", label: "Trésorerie" },
+  { href: "/rapprochement", label: "Rapprochement" },
   { href: "/immobilisations", label: "Immobilisations" },
   { href: "/paie", label: "Paie" },
   { href: "/fiscal", label: "Fiscal" },
   { href: "/rapports", label: "États financiers" },
+  { href: "/rapports/etat-301", label: "État 301 (DGI)" },
+  { href: "/utilisateurs", label: "Utilisateurs" },
   { href: "/parametres", label: "Paramètres" },
 ];
 

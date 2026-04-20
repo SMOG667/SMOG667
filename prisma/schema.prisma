@@ -142,6 +142,7 @@ model Entreprise {
   bulletins       BulletinPaie[]
   exercices       Exercice[]
   immobilisations Immobilisation[]
+  releves         ReleveBancaire[]
 }
 
 model Associe {
@@ -666,6 +667,38 @@ model Immobilisation {
   dotations          DotationAmortissement[]
 
   @@unique([entrepriseId, code])
+}
+
+// ---------------------------------------------------------------------------
+//  Rapprochement bancaire
+// ---------------------------------------------------------------------------
+
+model ReleveBancaire {
+  id           String   @id @default(cuid())
+  entrepriseId String
+  entreprise   Entreprise @relation(fields: [entrepriseId], references: [id], onDelete: Cascade)
+  compteNumero String   // ex 521100
+  periode      String   // 2025-12
+  dateImport   DateTime @default(now())
+  soldeOuverture BigInt @default(0)
+  soldeCloture   BigInt @default(0)
+  lignes       LigneReleve[]
+
+  @@index([entrepriseId, compteNumero, periode])
+}
+
+model LigneReleve {
+  id              String          @id @default(cuid())
+  releveId        String
+  releve          ReleveBancaire  @relation(fields: [releveId], references: [id], onDelete: Cascade)
+  date            DateTime
+  libelle         String
+  reference       String?
+  debit           BigInt          @default(0)
+  credit          BigInt          @default(0)
+  rapproche       Boolean         @default(false)
+  ligneEcritureId String?
+  dateRapprochement DateTime?
 }
 
 model DotationAmortissement {
