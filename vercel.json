@@ -1,0 +1,11 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "prisma generate && prisma db push --skip-generate && next build",
+  "framework": "nextjs",
+  "regions": ["fra1"],
+  "functions": {
+    "src/app/(app)/factures/[id]/pdf/route.ts": { "maxDuration": 30 },
+    "src/app/(app)/paie/bulletins/[id]/pdf/route.ts": { "maxDuration": 30 },
+    "src/app/(app)/factures/ocr/page.tsx": { "maxDuration": 60 }
+  }
+}
