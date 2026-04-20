@@ -9,6 +9,7 @@ import {
   regimeFromCA,
   type RegimeFiscalCalc,
 } from "@/lib/fiscal/calculs";
+import { comptabiliserFacture } from "@/lib/comptabilite/ventilation";
 
 async function createFacture(formData: FormData) {
   "use server";
@@ -42,7 +43,7 @@ async function createFacture(formData: FormData) {
   });
   const numero = `${prefix}-${year}-${String(count + 1).padStart(4, "0")}`;
 
-  await prisma.facture.create({
+  const facture = await prisma.facture.create({
     data: {
       entrepriseId,
       numero,
@@ -57,10 +58,28 @@ async function createFacture(formData: FormData) {
       retenueAirsi: calc.retenueAirsi,
       netAPayer: calc.netAPayer,
       statut: "EMISE",
+      lignes: {
+        create: [
+          {
+            ordre: 0,
+            designation: objet ?? "Prestation",
+            unite: "U",
+            quantite: 1,
+            prixUnitaire: calc.ht,
+            montantHt: calc.ht,
+            tauxTva: regime === "TEE" ? 0 : 18,
+            compteVenteNumero:
+              type === "ACHAT" ? "605000" : type === "SITUATION" ? "7043000" : "704000",
+          },
+        ],
+      },
     },
   });
 
-  redirect("/factures");
+  const userId = (session.user as { id?: string }).id;
+  await comptabiliserFacture(facture.id, userId);
+
+  redirect(`/factures/${facture.id}`);
 }
 
 export default async function NewFacturePage() {
