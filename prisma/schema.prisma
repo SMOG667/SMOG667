@@ -1,0 +1,644 @@
+// ============================================================================
+//  FASTIBAT — Schéma comptable BTP Côte d'Ivoire
+//  Base : SYSCOHADA révisé (AUDCIF 2017) + spécificités DGI-CI + BTP
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+//  Utilisateurs & organisation
+// ---------------------------------------------------------------------------
+
+enum Role {
+  ADMIN         // Gérant / super-utilisateur
+  COMPTABLE     // Saisie comptable, édition états
+  CHEF_CHANTIER // Saisie terrain (avancement, achats chantier)
+  LECTEUR       // Consultation uniquement
+}
+
+model User {
+  id             String    @id @default(cuid())
+  email          String    @unique
+  passwordHash   String
+  nom            String
+  prenom         String?
+  telephone      String?
+  role           Role      @default(LECTEUR)
+  actif          Boolean   @default(true)
+  entrepriseId   String
+  entreprise    Entreprise @relation(fields: [entrepriseId], references: [id])
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  ecrituresSaisies EcritureComptable[] @relation("EcritureAuteur")
+  sessions         Session[]
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessionToken String   @unique
+  expires      DateTime
+}
+
+// ---------------------------------------------------------------------------
+//  Entreprise (multi-tenant possible)
+// ---------------------------------------------------------------------------
+
+enum RegimeFiscal {
+  TEE   // Taxe d'État de l'Entreprenant (CA < 50 M FCFA)
+  RSI   // Réel Simplifié d'Imposition (50M ≤ CA ≤ 500M)
+  RNI   // Réel Normal d'Imposition (CA > 500M)
+}
+
+enum FormeJuridique {
+  EI      // Entreprise Individuelle
+  SARL
+  SARLU
+  SA
+  SAS
+  SCS
+  SNC
+  SCOOP
+}
+
+model Entreprise {
+  id              String          @id @default(cuid())
+  denomination    String
+  sigle           String?
+  formeJuridique  FormeJuridique  @default(SARL)
+  rccm            String?         @unique
+  ncc             String?         @unique   // N° Compte Contribuable
+  codeCdi         String?                   // Code Centre des Impôts
+  codeActivite    String?                   // Ex: BTP 0202
+  dateDebut       DateTime?
+  dureeAnnees     Int             @default(99)
+
+  // Capital
+  capitalSocial   BigInt          @default(0)  // en FCFA
+  capitalNumeraire BigInt         @default(0)
+  capitalNature   BigInt          @default(0)
+  capitalIndustrie BigInt         @default(0)
+
+  // Siège
+  pays            String          @default("Côte d'Ivoire")
+  ville           String?
+  commune         String?
+  quartier        String?
+  adressePostale  String?
+  lot             String?
+  ilot            String?
+  section         String?
+  parcelle        String?
+  proprietaireLocal String?
+  telephone       String?
+  email           String?
+
+  // Dirigeant
+  gerantNom       String?
+  gerantDateNaissance DateTime?
+  gerantLieuNaissance String?
+  gerantNationalite   String?
+
+  // Fiscal
+  regimeFiscal    RegimeFiscal    @default(TEE)
+  caPrevisionnel  BigInt          @default(0)
+  assujettiTva    Boolean         @default(false)
+  assujettiPatenteTee Boolean     @default(true)
+  assujettiTobFdfp Boolean        @default(true)
+  assujettiIts    Boolean         @default(true)
+  assujettiIrvm   Boolean         @default(true)
+  assujettiFoncier Boolean        @default(true)
+  assujettiIs     Boolean         @default(false)
+  hasCommissaireCpte Boolean      @default(false)
+  cabinetComptable String?
+
+  // Exercice comptable en cours
+  exerciceEnCours Int             @default(2025)
+
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  users           User[]
+  associes        Associe[]
+  activites       Activite[]
+  tiers           Tiers[]
+  chantiers       Chantier[]
+  comptes         Compte[]
+  journaux        Journal[]
+  ecritures       EcritureComptable[]
+  devis           Devis[]
+  factures        Facture[]
+  declarations    DeclarationFiscale[]
+  salaries        Salarie[]
+  bulletins       BulletinPaie[]
+  exercices       Exercice[]
+}
+
+model Associe {
+  id              String      @id @default(cuid())
+  entrepriseId    String
+  entreprise      Entreprise  @relation(fields: [entrepriseId], references: [id], onDelete: Cascade)
+  nomComplet      String
+  nationalite     String?
+  parts           BigInt                          // valeur en FCFA
+  pourcentage     Decimal     @db.Decimal(5, 2)   // 0.00 à 100.00
+  estGerant       Boolean     @default(false)
+  createdAt       DateTime    @default(now())
+}
+
+model Activite {
+  id           String      @id @default(cuid())
+  entrepriseId String
+  entreprise   Entreprise  @relation(fields: [entrepriseId], references: [id], onDelete: Cascade)
+  code         String?     // Code activité officiel
+  libelle      String
+  principale   Boolean     @default(false)
+  ordre        Int         @default(0)
+}
+
+model Exercice {
+  id           String     @id @default(cuid())
+  entrepriseId String
+  entreprise   Entreprise @relation(fields: [entrepriseId], references: [id])
+  annee        Int
+  dateDebut    DateTime
+  dateFin      DateTime
+  clos         Boolean    @default(false)
+  dateCloture  DateTime?
+
+  @@unique([entrepriseId, annee])
+}
+
+// ---------------------------------------------------------------------------
+//  Plan comptable SYSCOHADA révisé
+// ---------------------------------------------------------------------------
+
+enum ClasseCompte {
+  C1  // Comptes de ressources durables
+  C2  // Comptes d'actif immobilisé
+  C3  // Comptes de stocks
+  C4  // Comptes de tiers
+  C5  // Comptes de trésorerie
+  C6  // Comptes de charges
+  C7  // Comptes de produits
+  C8  // Comptes des autres charges et autres produits HAO
+  C9  // Comptes analytiques (facultatif)
+}
+
+enum SensCompte {
+  DEBIT
+  CREDIT
+  MIXTE
+}
+
+model Compte {
+  id            String       @id @default(cuid())
+  entrepriseId  String
+  entreprise    Entreprise   @relation(fields: [entrepriseId], references: [id], onDelete: Cascade)
+  numero        String       // Ex: "101000", "411000"
+  libelle       String
+  classe        ClasseCompte
+  sensNormal    SensCompte   @default(MIXTE)
+  parentNumero  String?      // pour hiérarchie (101 parent de 101000)
+  lettrable     Boolean      @default(false) // comptes tiers
+  auxiliaire    Boolean      @default(false) // nécessite un tiers
+  actif         Boolean      @default(true)
+
+  lignes        LigneEcriture[]
+
+  @@unique([entrepriseId, numero])
+  @@index([entrepriseId, classe])
+}
+
+// ---------------------------------------------------------------------------
+//  Tiers (clients, fournisseurs, sous-traitants, salariés)
+// ---------------------------------------------------------------------------
+
+enum TypeTiers {
+  CLIENT
+  FOURNISSEUR
+  SOUS_TRAITANT
+  SALARIE
+  ETAT
+  ASSOCIE
+  DIVERS
+}
+
+model Tiers {
+  id             String      @id @default(cuid())
+  entrepriseId   String
+  entreprise     Entreprise  @relation(fields: [entrepriseId], references: [id], onDelete: Cascade)
+  code           String      // Ex: "C00001", "F00001"
+  type           TypeTiers
+  denomination   String
+  sigle          String?
+  rccm           String?
+  ncc            String?     // Compte contribuable (pour tiers CI)
+  adresse        String?
+  ville          String?
+  pays           String      @default("Côte d'Ivoire")
+  telephone      String?
+  email          String?
+  banque         String?
+  rib            String?
+  compteCollectif String?    // ex: 411000 client, 401000 fournisseur
+  soumisRetenue  Boolean     @default(false) // retenue à la source (AIRSI etc.)
+  tauxRetenue    Decimal?    @db.Decimal(5, 2)
+  actif          Boolean     @default(true)
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  devis          Devis[]
+  factures       Facture[]
+  lignes         LigneEcriture[]
+
+  @@unique([entrepriseId, code])
+  @@index([entrepriseId, type])
+}
+
+// ---------------------------------------------------------------------------
+//  Chantiers (analytique BTP)
+// ---------------------------------------------------------------------------
+
+enum StatutChantier {
+  PROSPECT
+  EN_COURS
+  SUSPENDU
+  TERMINE
+  RECEPTIONNE   // Réception provisoire/définitive
+  ANNULE
+}
+
+model Chantier {
+  id              String          @id @default(cuid())
+  entrepriseId    String
+  entreprise      Entreprise      @relation(fields: [entrepriseId], references: [id], onDelete: Cascade)
+  code            String          // Ex: "CH-2025-001"
+  libelle         String
+  description     String?
+  clientId        String?
+  adresse         String?
+  ville           String?
+  statut          StatutChantier  @default(PROSPECT)
+  dateDebut       DateTime?
+  dateFinPrevue   DateTime?
+  dateFinReelle   DateTime?
+  montantMarche   BigInt          @default(0)  // HT
+  avancementPct   Decimal         @default(0) @db.Decimal(5, 2)
+  retenueGarantiePct Decimal      @default(5) @db.Decimal(5, 2) // usuel 5% BTP
+  cautionBancaire Boolean         @default(false)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  situations      SituationTravaux[]
+  devis           Devis[]
+  factures        Facture[]
+  lignes          LigneEcriture[]
+
+  @@unique([entrepriseId, code])
+}
+
+model SituationTravaux {
+  id            String    @id @default(cuid())
+  chantierId    String
+  chantier      Chantier  @relation(fields: [chantierId], references: [id], onDelete: Cascade)
+  numero        Int       // N° de situation (1, 2, 3...)
+  date          DateTime
+  avancementPct Decimal   @db.Decimal(5, 2)
+  montantCumule BigInt    // cumulé HT
+  montantPeriode BigInt   // situation courante HT
+  factureId     String?   @unique
+  facture       Facture?  @relation(fields: [factureId], references: [id])
+  valide        Boolean   @default(false)
+  createdAt     DateTime  @default(now())
+}
+
+// ---------------------------------------------------------------------------
+//  Devis / Factures
+// ---------------------------------------------------------------------------
+
+enum StatutDevis {
+  BROUILLON
+  ENVOYE
+  ACCEPTE
+  REFUSE
+  EXPIRE
+}
+
+enum StatutFacture {
+  BROUILLON
+  EMISE
+  PARTIELLEMENT_PAYEE
+  PAYEE
+  EN_RETARD
+  ANNULEE
+}
+
+enum TypeFacture {
+  VENTE              // Facture client classique
+  SITUATION          // Situation de travaux BTP
+  AVANCE             // Demande d'avance de démarrage
+  AVOIR              // Note de crédit
+  ACHAT              // Facture fournisseur
+}
+
+model Devis {
+  id           String        @id @default(cuid())
+  entrepriseId String
+  entreprise   Entreprise    @relation(fields: [entrepriseId], references: [id])
+  numero       String
+  date         DateTime      @default(now())
+  validite     DateTime?
+  clientId     String
+  client       Tiers         @relation(fields: [clientId], references: [id])
+  chantierId   String?
+  chantier     Chantier?     @relation(fields: [chantierId], references: [id])
+  objet        String
+  montantHt    BigInt        @default(0)
+  montantTva   BigInt        @default(0)
+  montantTtc   BigInt        @default(0)
+  statut       StatutDevis   @default(BROUILLON)
+  lignes       LigneDevis[]
+  factureId    String?       @unique
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@unique([entrepriseId, numero])
+}
+
+model LigneDevis {
+  id          String  @id @default(cuid())
+  devisId     String
+  devis       Devis   @relation(fields: [devisId], references: [id], onDelete: Cascade)
+  ordre       Int     @default(0)
+  designation String
+  unite       String  @default("U") // U, m2, m3, ml, j, forfait
+  quantite    Decimal @db.Decimal(14, 3)
+  prixUnitaire BigInt
+  montantHt   BigInt
+  tauxTva     Decimal @default(0) @db.Decimal(5, 2)
+}
+
+model Facture {
+  id              String         @id @default(cuid())
+  entrepriseId    String
+  entreprise      Entreprise     @relation(fields: [entrepriseId], references: [id])
+  numero          String
+  type            TypeFacture    @default(VENTE)
+  date            DateTime       @default(now())
+  dateEcheance    DateTime?
+  tiersId         String
+  tiers           Tiers          @relation(fields: [tiersId], references: [id])
+  chantierId      String?
+  chantier        Chantier?      @relation(fields: [chantierId], references: [id])
+  objet           String?
+  montantHt       BigInt         @default(0)
+  montantTva      BigInt         @default(0)
+  montantTtc      BigInt         @default(0)
+  retenueGarantie BigInt         @default(0)  // BTP
+  retenueAirsi    BigInt         @default(0)  // retenue à la source
+  netAPayer       BigInt         @default(0)
+  montantPaye     BigInt         @default(0)
+  statut          StatutFacture  @default(BROUILLON)
+  lignes          LigneFacture[]
+  situation       SituationTravaux?
+  paiements       Paiement[]
+  ecritureId      String?        @unique
+  ecriture        EcritureComptable? @relation(fields: [ecritureId], references: [id])
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@unique([entrepriseId, numero])
+  @@index([entrepriseId, statut])
+}
+
+model LigneFacture {
+  id          String  @id @default(cuid())
+  factureId   String
+  facture     Facture @relation(fields: [factureId], references: [id], onDelete: Cascade)
+  ordre       Int     @default(0)
+  designation String
+  unite       String  @default("U")
+  quantite    Decimal @db.Decimal(14, 3)
+  prixUnitaire BigInt
+  montantHt   BigInt
+  tauxTva     Decimal @default(0) @db.Decimal(5, 2)
+  compteVenteNumero String? // ex: 706000
+}
+
+enum MoyenPaiement {
+  ESPECES
+  CHEQUE
+  VIREMENT
+  MOBILE_MONEY_ORANGE
+  MOBILE_MONEY_MTN
+  MOBILE_MONEY_WAVE
+  MOBILE_MONEY_MOOV
+  CARTE
+  AUTRE
+}
+
+model Paiement {
+  id         String         @id @default(cuid())
+  factureId  String
+  facture    Facture        @relation(fields: [factureId], references: [id], onDelete: Cascade)
+  date       DateTime       @default(now())
+  montant    BigInt
+  moyen      MoyenPaiement
+  reference  String?        // N° de chèque, ref Mobile Money, etc.
+  compteNumero String?      // ex 571000 caisse, 521100 banque
+  ecritureId String?
+  createdAt  DateTime       @default(now())
+}
+
+// ---------------------------------------------------------------------------
+//  Écritures comptables (partie double)
+// ---------------------------------------------------------------------------
+
+model Journal {
+  id           String              @id @default(cuid())
+  entrepriseId String
+  entreprise   Entreprise          @relation(fields: [entrepriseId], references: [id], onDelete: Cascade)
+  code         String              // VT, AC, BQ, CA, OD, AN, ...
+  libelle      String
+  type         TypeJournal         @default(OPERATIONS_DIVERSES)
+  compteDefaut String?             // ex 521100 pour un journal banque
+  ecritures    EcritureComptable[]
+
+  @@unique([entrepriseId, code])
+}
+
+enum TypeJournal {
+  VENTES
+  ACHATS
+  BANQUE
+  CAISSE
+  OPERATIONS_DIVERSES
+  A_NOUVEAUX
+  PAIE
+  FISCAL
+}
+
+model EcritureComptable {
+  id           String           @id @default(cuid())
+  entrepriseId String
+  entreprise   Entreprise       @relation(fields: [entrepriseId], references: [id])
+  journalId    String
+  journal      Journal          @relation(fields: [journalId], references: [id])
+  numero       String           // ex VT-2025-00001
+  date         DateTime
+  dateSaisie   DateTime         @default(now())
+  reference    String?          // pièce justificative
+  libelle      String
+  auteurId     String?
+  auteur       User?            @relation("EcritureAuteur", fields: [auteurId], references: [id])
+  validee      Boolean          @default(false)
+  dateValidation DateTime?
+  lettree      Boolean          @default(false)
+  lignes       LigneEcriture[]
+  factures     Facture[]
+
+  @@unique([entrepriseId, numero])
+  @@index([entrepriseId, date])
+}
+
+model LigneEcriture {
+  id           String            @id @default(cuid())
+  ecritureId   String
+  ecriture     EcritureComptable @relation(fields: [ecritureId], references: [id], onDelete: Cascade)
+  ordre        Int               @default(0)
+  compteId     String
+  compte       Compte            @relation(fields: [compteId], references: [id])
+  tiersId      String?
+  tiers        Tiers?            @relation(fields: [tiersId], references: [id])
+  chantierId   String?
+  chantier     Chantier?         @relation(fields: [chantierId], references: [id])
+  libelle      String?
+  debit        BigInt            @default(0)
+  credit       BigInt            @default(0)
+  lettrage     String?
+  dateLettrage DateTime?
+
+  @@index([compteId])
+  @@index([tiersId])
+  @@index([chantierId])
+}
+
+// ---------------------------------------------------------------------------
+//  Salariés & paie (CNPS, ITS, IS, FDFP)
+// ---------------------------------------------------------------------------
+
+enum TypeContrat {
+  CDI
+  CDD
+  STAGE
+  JOURNALIER
+  TACHERON
+}
+
+model Salarie {
+  id              String      @id @default(cuid())
+  entrepriseId    String
+  entreprise      Entreprise  @relation(fields: [entrepriseId], references: [id])
+  matricule       String
+  nom             String
+  prenom          String
+  dateNaissance   DateTime?
+  lieuNaissance   String?
+  nationalite     String?
+  cni             String?
+  numCnps         String?     // matricule CNPS
+  poste           String?
+  typeContrat     TypeContrat @default(CDI)
+  dateEmbauche    DateTime
+  dateSortie      DateTime?
+  salaireBase     BigInt      @default(0)
+  situationFamiliale String?  // C, M, V, D
+  nbEnfants       Int         @default(0)
+  chantierId      String?
+  actif           Boolean     @default(true)
+  bulletins       BulletinPaie[]
+
+  @@unique([entrepriseId, matricule])
+}
+
+model BulletinPaie {
+  id              String     @id @default(cuid())
+  entrepriseId    String
+  entreprise      Entreprise @relation(fields: [entrepriseId], references: [id])
+  salarieId       String
+  salarie         Salarie    @relation(fields: [salarieId], references: [id])
+  periode         String     // "2025-12"
+  salaireBrut     BigInt
+  primes          BigInt     @default(0)
+  avantages       BigInt     @default(0)
+  brutImposable   BigInt
+  its             BigInt     @default(0)   // Impôt Traitements et Salaires
+  cnpsSalarie     BigInt     @default(0)   // retenue salarié (6.3%)
+  cnpsEmployeur   BigInt     @default(0)   // patronale (16.4% + AT variable)
+  fdfpEmployeur   BigInt     @default(0)   // taxe apprentissage + formation
+  netAPayer       BigInt
+  genereLe        DateTime   @default(now())
+  ecritureId      String?
+}
+
+// ---------------------------------------------------------------------------
+//  Déclarations fiscales
+// ---------------------------------------------------------------------------
+
+enum TypeDeclaration {
+  TVA
+  TEE
+  ITS
+  CNPS
+  FDFP
+  TOB
+  IRVM
+  PATENTE
+  FONCIER
+  IS
+  BIC
+  ETAT_301       // liasse annuelle
+  AIRSI
+}
+
+enum StatutDeclaration {
+  A_FAIRE
+  PREPAREE
+  TELEDECLAREE
+  PAYEE
+  REJETEE
+}
+
+model DeclarationFiscale {
+  id             String            @id @default(cuid())
+  entrepriseId   String
+  entreprise     Entreprise        @relation(fields: [entrepriseId], references: [id])
+  type           TypeDeclaration
+  periode        String            // "2025-12", "T4-2025", "2025"
+  dateLimite     DateTime
+  datePreparation DateTime?
+  dateTele       DateTime?
+  datePaiement   DateTime?
+  base           BigInt            @default(0)
+  taux           Decimal           @default(0) @db.Decimal(6, 4)
+  montantDu      BigInt            @default(0)
+  montantPaye    BigInt            @default(0)
+  reference      String?           // ref DGI
+  statut         StatutDeclaration @default(A_FAIRE)
+  donneesJson    Json?             // détails / lignes
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  @@unique([entrepriseId, type, periode])
+  @@index([entrepriseId, dateLimite])
+}
