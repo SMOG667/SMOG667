@@ -10,6 +10,8 @@ const NAV = [
   { href: "/devis", label: "Devis" },
   { href: "/factures", label: "Factures" },
   { href: "/ecritures", label: "Écritures" },
+  { href: "/tresorerie", label: "Trésorerie" },
+  { href: "/immobilisations", label: "Immobilisations" },
   { href: "/paie", label: "Paie" },
   { href: "/fiscal", label: "Fiscal" },
   { href: "/rapports", label: "États financiers" },

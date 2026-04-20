@@ -141,6 +141,7 @@ model Entreprise {
   salaries        Salarie[]
   bulletins       BulletinPaie[]
   exercices       Exercice[]
+  immobilisations Immobilisation[]
 }
 
 model Associe {
@@ -617,6 +618,68 @@ enum StatutDeclaration {
   TELEDECLAREE
   PAYEE
   REJETEE
+}
+
+// ---------------------------------------------------------------------------
+//  Immobilisations & amortissements
+// ---------------------------------------------------------------------------
+
+enum MethodeAmortissement {
+  LINEAIRE
+  DEGRESSIF
+  UNITES_OEUVRE
+}
+
+enum CategorieImmo {
+  TERRAIN              // non amortissable
+  BATIMENT             // 20 ans
+  MATERIEL_BTP         // 5-8 ans
+  MATERIEL_TRANSPORT   // 4-5 ans
+  MOBILIER_BUREAU      // 10 ans
+  MATERIEL_INFORMATIQUE // 3 ans
+  AGENCEMENTS          // 10 ans
+  AUTRE
+}
+
+model Immobilisation {
+  id                 String      @id @default(cuid())
+  entrepriseId       String
+  entreprise         Entreprise  @relation(fields: [entrepriseId], references: [id], onDelete: Cascade)
+  code               String      // IMMO-2025-001
+  libelle            String
+  categorie          CategorieImmo
+  compteImmo         String      // ex 241100
+  compteAmort        String?     // ex 2841000
+  dateAcquisition    DateTime
+  dateMiseEnService  DateTime?
+  valeurAcquisition  BigInt
+  valeurResiduelle   BigInt      @default(0)
+  methode            MethodeAmortissement @default(LINEAIRE)
+  dureeAnnees        Int
+  tauxPct            Decimal     @db.Decimal(5, 2)
+  fournisseurId      String?
+  cede               Boolean     @default(false)
+  dateCession        DateTime?
+  prixCession        BigInt?
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+  dotations          DotationAmortissement[]
+
+  @@unique([entrepriseId, code])
+}
+
+model DotationAmortissement {
+  id                String         @id @default(cuid())
+  immobilisationId  String
+  immobilisation    Immobilisation @relation(fields: [immobilisationId], references: [id], onDelete: Cascade)
+  exercice          Int
+  montant           BigInt
+  cumul             BigInt
+  valeurNetteComptable BigInt
+  ecritureId        String?
+  genereLe          DateTime       @default(now())
+
+  @@unique([immobilisationId, exercice])
 }
 
 model DeclarationFiscale {
