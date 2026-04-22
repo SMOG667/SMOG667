@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { DUREES_PAR_CATEGORIE } from "@/lib/comptabilite/amortissements";
+import type { CategorieImmo } from "@prisma/client";
 
 async function createImmo(formData: FormData) {
   "use server";
@@ -12,8 +13,8 @@ async function createImmo(formData: FormData) {
   if (!session) return;
   const entrepriseId = (session.user as { entrepriseId: string }).entrepriseId;
 
-  const categorie = formData.get("categorie") as keyof typeof DUREES_PAR_CATEGORIE;
-  const defaults = DUREES_PAR_CATEGORIE[categorie];
+  const categorie = formData.get("categorie") as CategorieImmo;
+  const defaults = DUREES_PAR_CATEGORIE[categorie] ?? { annees: 5, compteAmort: "" };
   const dureeAnnees = Number(formData.get("duree") ?? defaults.annees);
 
   const year = new Date().getFullYear();
